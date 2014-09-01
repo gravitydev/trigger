@@ -19,13 +19,13 @@ object SqsQueueListener {
 class SqsQueueListener (
   sqs: AmazonSQSAsyncClient, 
   queueUrl: String, 
-  processor: Message => Unit
+  callback: Message => Unit
 ) extends FSM[SqsQueueListener.State, List[Message]] with ActorLogging {
   import context.dispatcher
   import SqsQueueListener._
   
   override def preStart () = {
-    log.info("Started SqsQueueListener for " + queueUrl + " and processor: " + processor)
+    log.info("Started SqsQueueListener for " + queueUrl)
     self ! Query
   }
   
@@ -76,7 +76,7 @@ class SqsQueueListener (
     }
     case _ -> Processing => {
       log.debug("Processing: " + stateData)
-      nextStateData foreach {processor ! _}
+      nextStateData foreach callback
       self ! Query
     }
   }

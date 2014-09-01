@@ -9,7 +9,7 @@ Add this to build.sbt:
 ```sbt
 resolvers += "gravity" at "https://devstack.io/repo/gravitydev/public"
 
-libraryDependencies += "com.gravitydev" %% "trigger" % "0.0.8-SNAPSHOT"
+libraryDependencies += "com.gravitydev" %% "trigger" % "0.0.9-SNAPSHOT"
 ```
 
 SqsQueueListener
@@ -27,7 +27,7 @@ val sqsListener = system.actorOf(
   Props(
     classOf[SqsQueueListener], 
     sqsClient, 
-    queueUrl, 
+    queueUrl,                   // url of the queue (String)
     message => println(message) // callback, provide your own
   )
 )
