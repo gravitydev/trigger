@@ -17,7 +17,9 @@ object SqsQueueListener {
 }
 
 class SqsQueueListener (
-  sqs: AmazonSQSAsyncClient, queueUrl: String, processor: ActorRef
+  sqs: AmazonSQSAsyncClient, 
+  queueUrl: String, 
+  processor: Message => Unit
 ) extends FSM[SqsQueueListener.State, List[Message]] with ActorLogging {
   import context.dispatcher
   import SqsQueueListener._
@@ -68,10 +70,9 @@ class SqsQueueListener (
               .withQueueUrl(queueUrl),
             _
           )
-        } map {_ =>
-          self ! Process(messages)
         }
       }
+      self ! Process(messages)
     }
     case _ -> Processing => {
       log.debug("Processing: " + stateData)
