@@ -17,6 +17,10 @@ SqsQueueListener
 Actor that listens (long-polling) on an Amazon SQS queue and applies the provided callback to any message received:
 
 ```scala
+import com.gravitydev.trigger.SqsQueueListener
+import akka.actor._
+...
+
 val sqsClient = new AmazonSQSClientAsync(...)
 
 val sqsListener = system.actorOf(
