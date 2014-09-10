@@ -14,7 +14,7 @@ libraryDependencies += "com.gravitydev" %% "trigger" % "0.0.9-SNAPSHOT"
 
 SqsQueueListener
 ----------------
-Actor that listens (long-polling) on an Amazon SQS queue and applies the provided callback to any message received:
+Actor that listens (long-polling) on an Amazon SQS queue and applies the provided callback to any messages received:
 
 ```scala
 import com.gravitydev.trigger.SqsQueueListener
@@ -28,7 +28,7 @@ val sqsListener = system.actorOf(
     classOf[SqsQueueListener], 
     sqsClient, 
     queueUrl,                   // url of the queue (String)
-    message => println(message) // callback, provide your own
+    messages => println(messages) // callback, provide your own
   )
 )
 ```

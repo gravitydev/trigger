@@ -11,7 +11,7 @@ import akka.actor.ActorSystem
 import scala.concurrent.Future
 import scala.collection.JavaConverters._
 import com.typesafe.scalalogging.slf4j.StrictLogging
-import com.gravitydev.awsutil._
+import com.gravitydev.awsutil.awsToScala
 
 class Queue (val url: String, val arn: String)
 class TopicQueue (url: String, arn: String, val subscriptionArn: String) extends Queue(url, arn)
@@ -23,68 +23,50 @@ class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val s
   import system.dispatcher
   
   def createTopic (name: String) = for {
-    _ <- withAsyncHandler {(handler: AsyncHandler[CreateTopicRequest,CreateTopicResult]) => 
-      sns.createTopicAsync(
-        new CreateTopicRequest()
-          .withName(name), 
-        handler
-      )
-    }
+  _ <-awsToScala(sns.createTopicAsync)(
+      new CreateTopicRequest()
+        .withName(name)
+    )
   } yield name
     
   def createQueue (name: String): Future[Queue] = for {
-    q <- withAsyncHandler[CreateQueueRequest, CreateQueueResult] {
-      sqs.createQueueAsync (
-        new CreateQueueRequest()
-          .withQueueName(name)
-          .withAttributes(Map(
-            "ReceiveMessageWaitTimeSeconds" -> "20"
-          ).asJava),
-        _
-      )
-    }
-    r <- withAsyncHandler[GetQueueAttributesRequest,GetQueueAttributesResult] {
-      sqs.getQueueAttributesAsync(
-        new GetQueueAttributesRequest().withAttributeNames("QueueArn").withQueueUrl(q.getQueueUrl),
-        _
-      )
-    }
+    q <- awsToScala(sqs.createQueueAsync)(
+      new CreateQueueRequest()
+        .withQueueName(name)
+        .withAttributes(Map(
+          "ReceiveMessageWaitTimeSeconds" -> "20"
+        ).asJava)
+    )
+    r <- awsToScala(sqs.getQueueAttributesAsync)(
+      new GetQueueAttributesRequest().withAttributeNames("QueueArn").withQueueUrl(q.getQueueUrl)
+    )
   } yield new Queue(q.getQueueUrl, r.getAttributes().get("QueueArn"))
   
-  def deleteQueue (queue: Queue): Future[Unit] = withAsyncHandler[DeleteQueueRequest, Void] {
-    sqs.deleteQueueAsync(
-      new DeleteQueueRequest().withQueueUrl(queue.url),
-      _
-    ) 
-  } map (_ => ())
+  def deleteQueue (queue: Queue): Future[Unit] = awsToScala(sqs.deleteQueueAsync)(
+    new DeleteQueueRequest().withQueueUrl(queue.url)
+  ) map (_ => ())
   
   def createTopicQueue (queueName: String, topicName: String, createIfAbsent: Boolean = true): Future[TopicQueue] = {
     val res = for {
       queue <- createQueue(queueName)
       
       // set permissions on the queue
-      _ <- withAsyncHandler[SetQueueAttributesRequest, Void] {
-        sqs.setQueueAttributesAsync(
-          new SetQueueAttributesRequest()
-            .withQueueUrl(queue.url)
-            .withAttributes(
-               Map[String,String](
-                 "Policy" -> allowTopicPolicy(queue.arn, arnPrefix + topicName)
-               ).asJava
-            ),
-          _
-        )
-      }
+      _ <- awsToScala(sqs.setQueueAttributesAsync)(
+        new SetQueueAttributesRequest()
+          .withQueueUrl(queue.url)
+          .withAttributes(
+             Map[String,String](
+               "Policy" -> allowTopicPolicy(queue.arn, arnPrefix + topicName)
+             ).asJava
+          )
+      )
       
-      subscription <- withAsyncHandler[SubscribeRequest, SubscribeResult] {
-        sns.subscribeAsync(
-          new SubscribeRequest()
-            .withEndpoint(queue.arn)
-            .withProtocol("sqs")
-            .withTopicArn(arnPrefix + topicName),
-          _
-        )
-      }
+      subscription <- awsToScala(sns.subscribeAsync)(
+        new SubscribeRequest()
+          .withEndpoint(queue.arn)
+          .withProtocol("sqs")
+          .withTopicArn(arnPrefix + topicName)
+      )
     } yield new TopicQueue(queue.url, queue.arn, subscription.getSubscriptionArn)
 
     // if the topic is not there, try to create it
@@ -105,13 +87,9 @@ class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val s
     })
   } yield ()
   
-  def publish (topicName: String, subject: String, message: String): Future[String] = withAsyncHandler[PublishRequest,PublishResult] {
-    logger.debug("Publishing [" + subject + ": " + message + "]")
-    sns.publishAsync (
-      new PublishRequest().withTopicArn(arnPrefix + topicName).withSubject(subject).withMessage(message),
-      _
-    )
-  } map {_.getMessageId} recover { // TODO: fix weird recover here
+  def publish (topicName: String, subject: String, message: String): Future[String] = awsToScala(sns.publishAsync)(
+    new PublishRequest().withTopicArn(arnPrefix + topicName).withSubject(subject).withMessage(message)
+  ) map {_.getMessageId} recover { // TODO: fix weird recover here
     case e => logger.error("Failed to publish ["+subject+": "+message+"] to topic ["+topicName+"]", e); throw e
   }
   
@@ -121,33 +99,27 @@ class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val s
     (for {
       received <- {
         logger.debug("Calling ReceiveMessageAsync")
-        withAsyncHandler [ReceiveMessageRequest, ReceiveMessageResult] {
-          sqs.receiveMessageAsync(
-            new ReceiveMessageRequest()
-              .withQueueUrl(queue.url)
-              .withWaitTimeSeconds(20),
-            _
-          )
-        } recover {case e => logger.error("Error receiving message", e); throw e}
+        awsToScala(sqs.receiveMessageAsync)(
+          new ReceiveMessageRequest()
+            .withQueueUrl(queue.url)
+            .withWaitTimeSeconds(20)
+        ) recover {case e => logger.error("Error receiving message", e); throw e}
       }
     } yield {
       logger.debug("Received: " + received)
       val messages = received.getMessages()
       if (messages.size > 0) {
-        withAsyncHandler [DeleteMessageBatchRequest, DeleteMessageBatchResult] {
-          sqs.deleteMessageBatchAsync(
-            new DeleteMessageBatchRequest()
-              .withEntries(
-                received.getMessages().asScala.map {m =>
-                  new DeleteMessageBatchRequestEntry()
-                    .withReceiptHandle(m.getReceiptHandle())
-                    .withId(m.getMessageId())
-                }.asJava
-              )
-              .withQueueUrl(queue.url),
-            _
-          )
-        } recover {case e => logger.error("Error deleting message", e)}
+        awsToScala(sqs.deleteMessageBatchAsync)(
+          new DeleteMessageBatchRequest()
+            .withEntries(
+              received.getMessages().asScala.map {m =>
+                new DeleteMessageBatchRequestEntry()
+                  .withReceiptHandle(m.getReceiptHandle())
+                  .withId(m.getMessageId())
+              }.asJava
+            )
+            .withQueueUrl(queue.url)
+        ) recover {case e => logger.error("Error deleting message", e)}
       }
       
       logger.debug("Message deleted")

@@ -3,7 +3,7 @@ package com.gravitydev.trigger
 import akka.actor._
 import com.amazonaws.services.sqs.AmazonSQSAsyncClient
 import com.amazonaws.services.sqs.model._
-import com.gravitydev.awsutil.withAsyncHandler
+import com.gravitydev.awsutil.awsToScala
 import scala.collection.JavaConverters._
 
 object SqsQueueListener {
@@ -16,10 +16,14 @@ object SqsQueueListener {
   private case class Process(messages: List[Message]) extends Command
 }
 
+/**
+ * Actor that long-polls on an Amazon SQS queue and calls a callback whenever 
+ * it receives one or more sqs messages
+ */
 class SqsQueueListener (
   sqs: AmazonSQSAsyncClient, 
   queueUrl: String, 
-  callback: Message => Unit
+  callback: List[Message] => Unit
 ) extends FSM[SqsQueueListener.State, List[Message]] with ActorLogging {
   import context.dispatcher
   import SqsQueueListener._
@@ -40,16 +44,12 @@ class SqsQueueListener (
   }
   
   onTransition {
-    case _ -> Waiting => withAsyncHandler[ReceiveMessageRequest, ReceiveMessageResult] {
-      log.debug("Querying SQS")
-      sqs.receiveMessageAsync(
-        new ReceiveMessageRequest()
-          .withMaxNumberOfMessages(10)
-          .withWaitTimeSeconds(20)
-          .withQueueUrl(queueUrl),
-        _
-      )
-    } map {res => 
+    case _ -> Waiting => awsToScala(sqs.receiveMessageAsync)(
+      new ReceiveMessageRequest()
+        .withMaxNumberOfMessages(10)
+        .withWaitTimeSeconds(20)
+        .withQueueUrl(queueUrl)
+    ) map {res => 
       log.debug("Response from SQS: " + res)
       
       val messages = res.getMessages().asScala.toList
@@ -57,26 +57,23 @@ class SqsQueueListener (
       log.debug("Received messages: " + messages.size)
       
       if (messages.nonEmpty) {
-        withAsyncHandler [DeleteMessageBatchRequest, DeleteMessageBatchResult] {
-          sqs.deleteMessageBatchAsync(
-            new DeleteMessageBatchRequest()
-              .withEntries(
-                messages.map {m =>
-                  new DeleteMessageBatchRequestEntry()
-                    .withReceiptHandle(m.getReceiptHandle())
-                    .withId(m.getMessageId())
-                }.asJava
-              )
-              .withQueueUrl(queueUrl),
-            _
-          )
-        }
+        awsToScala(sqs.deleteMessageBatchAsync)(
+          new DeleteMessageBatchRequest()
+            .withEntries(
+              messages.map {m =>
+                new DeleteMessageBatchRequestEntry()
+                  .withReceiptHandle(m.getReceiptHandle())
+                  .withId(m.getMessageId())
+              }.asJava
+            )
+            .withQueueUrl(queueUrl)
+        )
       }
       self ! Process(messages)
     }
     case _ -> Processing => {
       log.debug("Processing: " + stateData)
-      nextStateData foreach callback
+      if (nextStateData.nonEmpty) callback(nextStateData)
       self ! Query
     }
   }
