@@ -10,11 +10,11 @@ import com.amazonaws.services.sns.model.{Topic => _, _}
 import akka.actor.ActorSystem
 import scala.concurrent.Future
 import scala.collection.JavaConverters._
-import com.typesafe.scalalogging.slf4j.StrictLogging
+import com.typesafe.scalalogging.StrictLogging
 import com.gravitydev.awsutil.awsToScala
 
 class Queue (val url: String, val arn: String)
-class TopicQueue (url: String, arn: String, val subscriptionArn: String) extends Queue(url, arn)
+class TopicQueue (topicName: String, url: String, arn: String, val subscriptionArn: String) extends Queue(url, arn)
 
 /**
  * Provide basic push notifications by combining SNS with SQS long-polling.
@@ -67,7 +67,7 @@ class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val s
           .withProtocol("sqs")
           .withTopicArn(arnPrefix + topicName)
       )
-    } yield new TopicQueue(queue.url, queue.arn, subscription.getSubscriptionArn)
+    } yield new TopicQueue(topicName, queue.url, queue.arn, subscription.getSubscriptionArn)
 
     // if the topic is not there, try to create it
     res recoverWith { 
@@ -144,3 +144,4 @@ class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val s
     )  
   )
 }
+

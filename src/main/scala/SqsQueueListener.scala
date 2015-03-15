@@ -80,3 +80,4 @@ class SqsQueueListener (
   
   initialize()
 }
+
