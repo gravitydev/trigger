@@ -9,7 +9,7 @@ Add this to build.sbt:
 ```sbt
 resolvers += "gravity" at "https://devstack.io/repo/gravitydev/public"
 
-libraryDependencies += "com.gravitydev" %% "trigger" % "0.0.9-SNAPSHOT"
+libraryDependencies += "com.gravitydev" %% "trigger" % "0.1.0"
 ```
 
 SqsQueueListener
