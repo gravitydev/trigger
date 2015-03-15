@@ -13,21 +13,22 @@ import scala.collection.JavaConverters._
 import com.typesafe.scalalogging.StrictLogging
 import com.gravitydev.awsutil.awsToScala
 
-class Queue (val url: String, val arn: String)
-class TopicQueue (topicName: String, url: String, arn: String, val subscriptionArn: String) extends Queue(url, arn)
+class Queue (val arn: String, val url: String)
+class Topic (val arn: String)
+class TopicQueue (val topic: Topic, queue: Queue, val subscriptionArn: String) extends Queue(queue.arn, queue.url)
 
 /**
  * Provide basic push notifications by combining SNS with SQS long-polling.
  */
-class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val sns: AmazonSNSAsyncClient)(implicit system: ActorSystem) extends StrictLogging {
+class TriggerClient (val sqs: AmazonSQSAsyncClient, val sns: AmazonSNSAsyncClient)(implicit system: ActorSystem) extends StrictLogging {
   import system.dispatcher
   
-  def createTopic (name: String) = for {
-  _ <-awsToScala(sns.createTopicAsync)(
-      new CreateTopicRequest()
-        .withName(name)
-    )
-  } yield name
+  def createTopic (name: String): Future[Topic] = for {
+    res <-awsToScala(sns.createTopicAsync)(
+        new CreateTopicRequest()
+          .withName(name)
+      )
+  } yield new Topic(res.getTopicArn)
     
   def createQueue (name: String): Future[Queue] = for {
     q <- awsToScala(sqs.createQueueAsync)(
@@ -40,12 +41,13 @@ class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val s
     r <- awsToScala(sqs.getQueueAttributesAsync)(
       new GetQueueAttributesRequest().withAttributeNames("QueueArn").withQueueUrl(q.getQueueUrl)
     )
-  } yield new Queue(q.getQueueUrl, r.getAttributes().get("QueueArn"))
+  } yield new Queue(r.getAttributes().get("QueueArn"), q.getQueueUrl)
   
   def deleteQueue (queue: Queue): Future[Unit] = awsToScala(sqs.deleteQueueAsync)(
     new DeleteQueueRequest().withQueueUrl(queue.url)
   ) map (_ => ())
-  
+
+  /*  
   def createTopicQueue (queueName: String, topicName: String, createIfAbsent: Boolean = true): Future[TopicQueue] = {
     val res = for {
       queue <- createQueue(queueName)
@@ -77,20 +79,43 @@ class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val s
       } yield subs
     }
   }
+  */
+
+  def createTopicQueue (topic: Topic, queueName: String): Future[TopicQueue] = for {
+    queue <- createQueue(queueName)
+    
+    // set permissions on the queue
+    _ <- awsToScala(sqs.setQueueAttributesAsync)(
+      new SetQueueAttributesRequest()
+        .withQueueUrl(queue.url)
+        .withAttributes(
+           Map[String,String](
+             "Policy" -> allowTopicPolicy(queue.arn, topic.arn)
+           ).asJava
+        )
+    )
+    
+    subscription <- awsToScala(sns.subscribeAsync)(
+      new SubscribeRequest()
+        .withEndpoint(queue.arn)
+        .withProtocol("sqs")
+        .withTopicArn(topic.arn)
+    )
+  } yield new TopicQueue(topic, queue, subscription.getSubscriptionArn)
   
   def deleteTopicQueue (queue: TopicQueue) = for {
-    unsubscribe <- List(sns.unsubscribe {
+    _ <- awsToScala(sns.unsubscribeAsync) {
       new UnsubscribeRequest().withSubscriptionArn(queue.subscriptionArn)
-    })
-    delete <- List(sqs.deleteQueue {
+    }
+    _ <- awsToScala(sqs.deleteQueueAsync) {
       new DeleteQueueRequest().withQueueUrl(queue.url)
-    })
+    }
   } yield ()
   
-  def publish (topicName: String, subject: String, message: String): Future[String] = awsToScala(sns.publishAsync)(
-    new PublishRequest().withTopicArn(arnPrefix + topicName).withSubject(subject).withMessage(message)
+  def publish (topic: Topic, subject: String, message: String): Future[String] = awsToScala(sns.publishAsync)(
+    new PublishRequest().withTopicArn(topic.arn).withSubject(subject).withMessage(message)
   ) map {_.getMessageId} recover { // TODO: fix weird recover here
-    case e => logger.error("Failed to publish ["+subject+": "+message+"] to topic ["+topicName+"]", e); throw e
+    case e => logger.error("Failed to publish ["+subject+": "+message+"] to topic ["+topic.arn+"]", e); throw e
   }
   
   def receiveMessages (queue: Queue): Future[List[Message]] = {
@@ -131,7 +156,6 @@ class TriggerClient (val arnPrefix: String, val sqs: AmazonSQSAsyncClient, val s
     Json.obj(
       "Statement" -> Json.arr(
         Json.obj(
-          "Sid" -> "MySQSPolicy001",
           "Effect" -> "Allow",
           "Principal" -> Json.obj("AWS"->"*"),
           "Action" -> "sqs:SendMessage",

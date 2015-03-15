@@ -3,7 +3,7 @@ organization := "com.gravitydev"
 
 name := "trigger"
 
-version := "0.1.0-SNAPSHOT"
+version := "0.1.1-SNAPSHOT"
 
 scalaVersion := "2.11.6"
 
