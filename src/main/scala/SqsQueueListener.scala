@@ -23,12 +23,14 @@ object SqsQueueListener {
 class SqsQueueListener (
   sqs: AmazonSQSAsyncClient, 
   queueUrl: String, 
-  callback: List[Message] => Unit
+  callback: List[Message] => Unit,
+  messageAttributes: Set[String] = Set("*")
 ) extends FSM[SqsQueueListener.State, List[Message]] with ActorLogging {
   import context.dispatcher
   import SqsQueueListener._
   
   override def preStart () = {
+    super.preStart()
     log.info("Started SqsQueueListener for " + queueUrl)
     self ! Query
   }
@@ -49,6 +51,7 @@ class SqsQueueListener (
         .withMaxNumberOfMessages(10)
         .withWaitTimeSeconds(20)
         .withQueueUrl(queueUrl)
+        .withMessageAttributeNames(messageAttributes.asJava)
     ) map {res => 
       log.debug("Response from SQS: " + res)
       
