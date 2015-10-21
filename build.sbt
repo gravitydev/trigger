@@ -3,11 +3,11 @@ organization := "com.gravitydev"
 
 name := "trigger"
 
-version := "0.1.2-SNAPSHOT"
+version := "0.1.3-SNAPSHOT"
 
 scalaVersion := "2.11.6"
 
-crossScalaVersions := Seq("2.11.6")
+crossScalaVersions := Seq("2.11.7")
 
 libraryDependencies ++= Seq(
   "com.gravitydev" %% "awsutil" % "0.0.3-SNAPSHOT",
