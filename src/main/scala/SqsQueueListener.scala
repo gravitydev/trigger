@@ -75,7 +75,7 @@ class SqsQueueListener (
       self ! Process(messages)
     }
     case _ -> Processing => {
-      log.debug("Processing: " + stateData)
+      log.debug("Processing: " + nextStateData)
       if (nextStateData.nonEmpty) callback(nextStateData)
       self ! Query
     }
